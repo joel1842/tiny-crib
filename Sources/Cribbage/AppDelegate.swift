@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let panel: OverlayPanel
     private var keyMonitor: Any?
     private var previousApp: NSRunningApplication?
+    private var menuBarItem: MenuBarItem?
 
     override init() {
         panel = OverlayPanel(rootView: ContentView().environmentObject(controller))
@@ -36,6 +37,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if let seed = demoSeed() {
             controller.runDemo(seed: seed)
         } else {
+            menuBarItem = MenuBarItem(actions: .init(
+                isGameVisible: { [weak self] in self?.panel.isVisible ?? false },
+                toggleGame: { [weak self] in self?.toggleVisibility() },
+                newGame: { [weak self] in
+                    self?.show()
+                    self?.controller.newGame()
+                },
+                toggleBoard: { [weak self] in
+                    self?.show()
+                    self?.controller.toggleBoard()
+                }
+            ))
             controller.newGame()
         }
     }
