@@ -2,6 +2,8 @@
 
 A tiny cribbage game that runs in a tiny window in the bottom left corner of your Mac desktop. Meant to be played fully through the keyboard so you can rip crib games as fast as humanly possible. Crib speedruns are the new meta.
 
+![Tiny Crib in the bottom left corner of a Mac desktop](assets/desktop-preview.png)
+
 [![Download for macOS](assets/download-button.svg)](https://github.com/joel1842/tiny-crib/releases/latest/download/tiny-crib.dmg)
 
 <sub>haven't signed the release so you will have to take my word that i didnt added a keylogger 😈</sub>
