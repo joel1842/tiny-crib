@@ -1,4 +1,3 @@
-<img width="390" height="262" alt="tiny-crib-0-cut-for-deal" src="https://github.com/user-attachments/assets/dee9e170-eff5-439d-b20c-cfcf14a20450" />
 # tiny-crib
 
 A tiny cribbage game that runs in a tiny window in the bottom left corner of your Mac desktop. Meant to be played fully through the keyboard so you can rip crib games as fast as humanly possible. Crib speedruns are the new meta.
