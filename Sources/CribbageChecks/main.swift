@@ -4,7 +4,7 @@ import Foundation
 var failures = 0
 var passes = 0
 
-func check(_ condition: Bool, _ name: String, line: Int = #line) {
+@MainActor func check(_ condition: Bool, _ name: String, line: Int = #line) {
     if condition {
         passes += 1
     } else {
@@ -45,55 +45,64 @@ check(PeggingScorer.score(sequence: [Card(4, .spades), Card(3, .hearts), Card(6,
 check(PeggingScorer.score(sequence: [Card(2, .spades), Card(3, .hearts), Card(4, .clubs), Card(2, .hearts)], count: 11) == [ScoreItem(kind: .run, label: "run of 3", points: 3)], "run in the last three cards")
 
 var goGame = Game.atPlay(
-    dealer: .them,
+    dealer: .bot,
     hands: [
         .me: [Card(13, .spades), Card(12, .hearts), Card(2, .clubs), Card(3, .clubs)],
-        .them: [Card(10, .spades), Card(9, .hearts), Card(4, .diamonds), Card(5, .diamonds)],
+        .bot: [Card(10, .spades), Card(9, .hearts), Card(4, .diamonds), Card(5, .diamonds)],
     ],
     starter: Card(1, .spades)
 )
 check(goGame.play(Card(13, .spades), by: .me), "pone leads")
-check(goGame.play(Card(10, .spades), by: .them), "dealer follows")
+check(goGame.play(Card(10, .spades), by: .bot), "dealer follows")
 check(goGame.played.last?.points == 0, "no points for twenty")
 check(!goGame.play(Card(9, .hearts), by: .me), "cannot play opponent's card")
 check(goGame.play(Card(12, .hearts), by: .me), "count reaches 30")
 check(goGame.scores[.me] == 1, "go point to last player")
 check(goGame.played.map(\.points) == [0, 0, 1], "go point is credited to the card that earned it")
 
-var fifteenGame = Game.atPlay(dealer: .them, hands: [.me: [Card(10, .clubs)], .them: [Card(5, .hearts)]], starter: Card(1, .spades))
+var fifteenGame = Game.atPlay(dealer: .bot, hands: [.me: [Card(10, .clubs)], .bot: [Card(5, .hearts)]], starter: Card(1, .spades))
 fifteenGame.play(Card(10, .clubs), by: .me)
-fifteenGame.play(Card(5, .hearts), by: .them)
+fifteenGame.play(Card(5, .hearts), by: .bot)
 check(fifteenGame.played.map(\.points) == [0, 3], "fifteen and last card both land on the scoring card")
-check(goGame.events.contains(ScoreEvent(player: .them, points: 0, label: "go")), "opponent says go")
-check(goGame.round == 1 && goGame.count == 0 && goGame.turn == .them, "count resets and other player leads")
+check(goGame.events.contains(ScoreEvent(player: .bot, points: 0, reason: .saidGo)), "opponent says go")
+check(goGame.round == 1 && goGame.count == 0 && goGame.turn == .bot, "count resets and other player leads")
 
 var overGame = Game.atPlay(
-    dealer: .them,
-    hands: [.me: [Card(13, .spades), Card(5, .hearts)], .them: [Card(10, .spades), Card(9, .hearts), Card(2, .clubs)]],
+    dealer: .bot,
+    hands: [.me: [Card(13, .spades), Card(5, .hearts)], .bot: [Card(10, .spades), Card(9, .hearts), Card(2, .clubs)]],
     starter: Card(1, .spades)
 )
 overGame.play(Card(13, .spades), by: .me)
-overGame.play(Card(10, .spades), by: .them)
+overGame.play(Card(10, .spades), by: .bot)
 overGame.play(Card(5, .hearts), by: .me)
-check(!overGame.play(Card(9, .hearts), by: .them), "play over 31 is rejected")
-check(overGame.play(Card(2, .clubs), by: .them), "legal card still plays")
+check(!overGame.play(Card(9, .hearts), by: .bot), "play over 31 is rejected")
+check(overGame.play(Card(2, .clubs), by: .bot), "legal card still plays")
 
-var showGame = Game.atPlay(dealer: .them, hands: [.me: [Card(2, .clubs)], .them: [Card(3, .clubs)]], starter: Card(1, .spades))
+var showGame = Game.atPlay(dealer: .bot, hands: [.me: [Card(2, .clubs)], .bot: [Card(3, .clubs)]], starter: Card(1, .spades))
 showGame.play(Card(2, .clubs), by: .me)
-showGame.play(Card(3, .clubs), by: .them)
-check(showGame.events.first == ScoreEvent(player: .them, points: 1, label: "last card"), "last card point")
+showGame.play(Card(3, .clubs), by: .bot)
+check(showGame.events.first == ScoreEvent(player: .bot, points: 1, reason: .lastCard), "last card point")
 check(showGame.phase == .show(.pone) && showGame.showing?.player == .me, "pone counts first")
 showGame.advanceShow()
-check(showGame.showing?.player == .them && showGame.showing?.isCrib == false, "dealer counts second")
+check(showGame.showing?.player == .bot && showGame.showing?.isCrib == false, "dealer counts second")
 showGame.advanceShow()
 check(showGame.showing?.isCrib == true, "crib counts last")
 showGame.advanceShow()
 check(showGame.phase == .discard && showGame.dealer == .me, "deal passes after the crib")
 
-var winningShow = Game.atPlay(dealer: .them, hands: [.me: [Card(5, .clubs)], .them: [Card(2, .clubs)]], starter: Card(5, .hearts))
+var losingShow = Game.atPlay(dealer: .bot, hands: [.me: [Card(5, .clubs)], .bot: [Card(2, .clubs)]], starter: Card(5, .hearts))
+losingShow.play(Card(5, .clubs), by: .me)
+losingShow.play(Card(2, .clubs), by: .bot)
+check(losingShow.winningShowing == nil, "no winning count before the target")
+
+var winningShow = Game.atPlay(dealer: .bot, hands: [.me: [Card(5, .clubs)], .bot: [Card(2, .clubs)]], starter: Card(5, .hearts), scores: [.me: 119, .bot: 0])
 winningShow.play(Card(5, .clubs), by: .me)
-winningShow.play(Card(2, .clubs), by: .them)
-check(winningShow.lastShowing?.player == .me && winningShow.lastShowing?.isCrib == false, "last counted hand is remembered")
+winningShow.play(Card(2, .clubs), by: .bot)
+check(winningShow.phase == .gameOver(winner: .me), "pone wins on the count")
+check(winningShow.winningShowing?.player == .me && winningShow.winningShowing?.isCrib == false, "winning count is remembered")
+
+check([Card(9, .clubs), Card(9, .spades), Card(2, .hearts)].sorted() == [Card(2, .hearts), Card(9, .spades), Card(9, .clubs)], "cards sort by rank then suit")
+check(handScore([Card(3, .hearts)], Card(9, .spades)).items.isEmpty, "a single card is not a flush")
 
 var winsForMe = 0
 for seed in UInt64(1)...60 {
@@ -104,12 +113,12 @@ for seed in UInt64(1)...60 {
         steps += 1
         switch game.phase {
         case .discard:
-            for player in [Player.them, .me] where game.hands[player]?.count == 6 {
-                game.discard(Opponent.chooseDiscard(hand: game.hands[player]!, isDealer: game.dealer == player), by: player)
+            for player in [Player.bot, .me] where game.hands[player]?.count == 6 {
+                game.discard(Opponent.chooseDiscard(hand: game.hands[player, default: []], isDealer: game.dealer == player), by: player)
             }
         case .play:
-            let card = Opponent.choosePlay(hand: game.inHand[game.turn]!, sequence: game.sequence, count: game.count)!
-            if !game.play(card, by: game.turn) { rejected += 1 }
+            let card = Opponent.choosePlay(hand: game.inHand[game.turn, default: []], sequence: game.sequence, count: game.count)
+            if card.map({ game.play($0, by: game.turn) }) != true { rejected += 1 }
         case .show:
             game.advanceShow()
         case .gameOver:

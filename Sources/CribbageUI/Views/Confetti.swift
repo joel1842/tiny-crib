@@ -4,7 +4,7 @@ struct Confetti: View {
     let start: Date
     let origin: CGPoint
     private let symbols = ["♠", "♥", "♦", "♣", "★"]
-    private let colors: [Color] = [Theme.gold, Theme.me, Theme.them, .white, Theme.cardRed]
+    private let colors: [Color] = [Theme.gold, Theme.me, Theme.bot, .white, Theme.suitRed]
     private let lifetime = 2.6
 
     var body: some View {

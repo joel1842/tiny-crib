@@ -33,7 +33,7 @@ struct StatusLine: View {
         } else if let showing = controller.showing {
             HStack(spacing: 5) {
                 Circle().fill(Theme.color(for: showing.player)).frame(width: 5, height: 5)
-                Text(title(showing))
+                Text("\(showing.player.possessive) \(showing.isCrib ? "CRIB" : "HAND")")
                     .font(.system(size: 8.5, weight: .heavy))
                     .tracking(0.6)
                     .foregroundStyle(.white.opacity(0.8))
@@ -63,7 +63,7 @@ struct StatusLine: View {
             let mine = game.turn == .me
             HStack(spacing: 4) {
                 Circle().fill(Theme.color(for: game.turn)).frame(width: 5, height: 5)
-                Text(mine ? "YOUR PLAY" : "THEIR PLAY")
+                Text("\(game.turn.possessive) PLAY")
                     .font(.system(size: 8.5, weight: .heavy))
                     .tracking(0.7)
                     .foregroundStyle(Theme.color(for: game.turn))
@@ -71,7 +71,7 @@ struct StatusLine: View {
                 if !mine {
                     Image(systemName: "ellipsis")
                         .font(.system(size: 8, weight: .heavy))
-                        .foregroundStyle(Theme.them)
+                        .foregroundStyle(Theme.bot)
                         .symbolEffect(.variableColor.iterative, options: .repeating)
                 }
             }
@@ -84,14 +84,5 @@ struct StatusLine: View {
     private func hint(_ action: String) -> some View {
         KeyHint(key: "⏎", action: action)
             .onTapGesture { controller.pressEnter() }
-    }
-
-    private func title(_ showing: Showing) -> String {
-        switch (showing.player, showing.isCrib) {
-        case (.me, false): "YOUR HAND"
-        case (.them, false): "THEIR HAND"
-        case (.me, true): "YOUR CRIB"
-        case (.them, true): "THEIR CRIB"
-        }
     }
 }

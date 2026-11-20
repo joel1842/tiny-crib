@@ -22,7 +22,7 @@ struct TableLayout {
     static let size = CGSize(width: 290, height: 162)
     static let stripY: CGFloat = 10
     static let chipWidth: CGFloat = 90
-    static let themChip = CGPoint(x: chipWidth / 2, y: stripY)
+    static let botChip = CGPoint(x: chipWidth / 2, y: stripY)
     static let youChip = CGPoint(x: size.width - chipWidth / 2, y: stripY)
     static let statusY: CGFloat = 33
     static let middleY: CGFloat = 70
@@ -54,7 +54,7 @@ struct TableLayout {
     }
 
     var rowsHeight: CGFloat {
-        let count = CGFloat(max(1, Set(controller.countBeats.map(\.kind)).count))
+        let count = CGFloat(max(1, Set(controller.countItems.map(\.kind)).count))
         return count * Self.rowHeight + (count - 1) * Self.rowSpacing
     }
 
@@ -75,7 +75,7 @@ struct TableLayout {
     }
 
     var cards: [Card] {
-        var all = game.hands[.them, default: []] + game.hands[.me, default: []] + game.crib
+        var all = game.hands[.bot, default: []] + game.hands[.me, default: []] + game.crib
         if let starter = game.starter { all.append(starter) }
         return all
     }
@@ -84,7 +84,7 @@ struct TableLayout {
         if controller.isCollecting || controller.showsWinner {
             return CardSpot(center: deckSpot, size: .medium, faceUp: false, z: 0.2)
         }
-        let beatActive = controller.currentBeat != nil
+        let isCounting = controller.currentItem != nil
         if card == game.starter {
             let step = controller.cutStep
             let isHighlighted = controller.highlightedCards.contains(card)
@@ -93,18 +93,18 @@ struct TableLayout {
                 size: .medium,
                 faceUp: controller.showing != nil || step.showsFace,
                 z: 6,
-                isDimmed: beatActive && !isHighlighted,
+                isDimmed: isCounting && !isHighlighted,
                 isHighlighted: isHighlighted
             )
         }
-        if let showing = controller.showing, let index = row(for: showing).firstIndex(of: card) {
+        if let showing = controller.showing, let index = showing.cards.sorted().firstIndex(of: card) {
             let isHighlighted = controller.highlightedCards.contains(card)
             return CardSpot(
                 center: CGPoint(x: Self.size.width / 2 - 60 + CGFloat(index) * 40, y: rowY - (isHighlighted ? 5 : 0)),
                 size: .medium,
                 faceUp: true,
                 z: 40 + Double(index),
-                isDimmed: beatActive && !isHighlighted,
+                isDimmed: isCounting && !isHighlighted,
                 isHighlighted: isHighlighted
             )
         }
@@ -117,7 +117,7 @@ struct TableLayout {
             )
         }
 
-        let owner: Player = game.hands[.me, default: []].contains(card) ? .me : .them
+        let owner: Player = game.hands[.me, default: []].contains(card) ? .me : .bot
         if game.phase == .discard {
             let hand = game.hands[owner, default: []]
             let index = hand.firstIndex(of: card) ?? 0
@@ -150,7 +150,7 @@ struct TableLayout {
             return CardSpot(
                 center: CGPoint(
                     x: Self.pileCenterX + (position - CGFloat(current.count - 1) / 2) * stride,
-                    y: Self.middleY + (entry.player == .them ? -2 : 2)
+                    y: Self.middleY + (entry.player == .bot ? -2 : 2)
                 ),
                 size: .medium,
                 faceUp: true,
@@ -160,16 +160,12 @@ struct TableLayout {
                 owner: entry.player
             )
         }
-        if owner == .them {
-            let hand = game.inHand[.them, default: []]
+        if owner == .bot {
+            let hand = game.inHand[.bot, default: []]
             return theirHand(index: hand.firstIndex(of: card) ?? 0, count: hand.count)
         }
         let hand = game.inHand[.me, default: []]
         return myHand(index: hand.firstIndex(of: card) ?? 0, count: hand.count, card: card)
-    }
-
-    func row(for showing: Showing) -> [Card] {
-        showing.cards.sorted { ($0.rank, $0.suit.rawValue) < ($1.rank, $1.suit.rawValue) }
     }
 
     private func theirHand(index: Int, count: Int) -> CardSpot {
@@ -185,12 +181,12 @@ struct TableLayout {
             faceUp: false,
             z: 20 + Double(index),
             rotation: -degrees,
-            bobs: game.phase == .play && game.turn == .them && !controller.isHoldingTable
+            bobs: game.phase == .play && game.turn == .bot && !controller.isHoldingTable
         )
     }
 
     private func hiddenSpot(_ owner: Player) -> CGPoint {
-        let chip = owner == .me ? Self.youChip : Self.themChip
+        let chip = owner == .me ? Self.youChip : Self.botChip
         return CGPoint(x: chip.x, y: chip.y - 48)
     }
 

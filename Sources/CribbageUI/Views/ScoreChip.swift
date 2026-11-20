@@ -15,7 +15,7 @@ struct ScoreChip: View {
         HStack(spacing: 0) {
             HStack(spacing: 3.5) {
                 Circle().fill(color).frame(width: 5, height: 5)
-                Text(player == .me ? "YOU" : "THEM")
+                Text(player.name)
                     .font(.system(size: 8.5, weight: .heavy))
                     .tracking(0.5)
                     .foregroundStyle(.white.opacity(0.85))
@@ -24,7 +24,7 @@ struct ScoreChip: View {
                     Image(systemName: "rectangle.stack.fill")
                         .font(.system(size: 7.5, weight: .bold))
                         .foregroundStyle(color)
-                        .help("\(player == .me ? "Your" : "Their") crib")
+                        .help(player == .me ? "Your crib" : "Bot's crib")
                 }
             }
             Spacer(minLength: 4)

@@ -3,70 +3,37 @@ import Carbon.HIToolbox
 import CribbageUI
 import SwiftUI
 
-final class OverlayPanel: NSPanel {
-    override var canBecomeKey: Bool { true }
-    override var canBecomeMain: Bool { true }
-}
-
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+    private static let originDefaultsKey = "overlayOrigin"
+    private static let screenInset: CGFloat = 16
+
     private let controller = GameController()
-    private var panel: OverlayPanel!
-    private var hotKeys: [HotKey] = []
+    private let panel: OverlayPanel
     private var keyMonitor: Any?
     private var previousApp: NSRunningApplication?
 
+    override init() {
+        panel = OverlayPanel(rootView: ContentView().environmentObject(controller))
+        super.init()
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
-        let hosting = NSHostingView(rootView: ContentView().environmentObject(controller))
-        let size = hosting.fittingSize
-
-        panel = OverlayPanel(
-            contentRect: NSRect(origin: .zero, size: size),
-            styleMask: [.borderless, .nonactivatingPanel],
-            backing: .buffered,
-            defer: false
-        )
-        panel.contentView = hosting
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = true
-        panel.level = .normal
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        panel.isMovableByWindowBackground = true
-        panel.hidesOnDeactivate = false
-
-        panel.setFrameOrigin(startingOrigin(for: size))
+        panel.delegate = self
+        panel.setFrameOrigin(startingOrigin(for: panel.frame.size))
         panel.orderFrontRegardless()
 
-        NotificationCenter.default.addObserver(forName: NSWindow.didMoveNotification, object: panel, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let panel = self?.panel else { return }
-                panel.orderFrontRegardless()
-                UserDefaults.standard.set(NSStringFromPoint(panel.frame.origin), forKey: "overlayOrigin")
-            }
-        }
-        NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: panel, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.panelBecameKey() }
-        }
-
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            MainActor.assumeIsolated { self?.handle(event) == true ? nil : event }
+            let press = KeyPress(event)
+            let handled = MainActor.assumeIsolated { self?.handle(press) ?? false }
+            return handled ? nil : event
         }
 
-        let modifiers = UInt32(controlKey | optionKey)
-        hotKeys = [
-            HotKey(keyCode: UInt32(kVK_ANSI_C), modifiers: modifiers) { [weak self] in
-                MainActor.assumeIsolated { self?.summon() }
-            },
-            HotKey(keyCode: UInt32(kVK_ANSI_H), modifiers: modifiers) { [weak self] in
-                MainActor.assumeIsolated { self?.toggleVisibility() }
-            },
-        ]
+        let modifiers = controlKey | optionKey
+        GlobalHotKeys.register(keyCode: kVK_ANSI_C, modifiers: modifiers) { [weak self] in self?.summon() }
+        GlobalHotKeys.register(keyCode: kVK_ANSI_H, modifiers: modifiers) { [weak self] in self?.toggleVisibility() }
 
-        let arguments = ProcessInfo.processInfo.arguments
-        if let flag = arguments.firstIndex(of: "--demo") {
-            let seed = arguments.dropFirst(flag + 1).first.flatMap { UInt64($0) } ?? 7
-            panel.orderFrontRegardless()
+        if let seed = demoSeed() {
             controller.runDemo(seed: seed)
         } else {
             controller.newGame()
@@ -78,8 +45,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return false
     }
 
+    func windowDidMove(_ notification: Notification) {
+        panel.orderFrontRegardless()
+        UserDefaults.standard.set(NSStringFromPoint(panel.frame.origin), forKey: Self.originDefaultsKey)
+    }
+
+    func windowDidBecomeKey(_ notification: Notification) {
+        rememberFrontmostApp()
+        panel.orderFrontRegardless()
+    }
+
+    private func demoSeed() -> UInt64? {
+        let arguments = ProcessInfo.processInfo.arguments
+        guard let flag = arguments.firstIndex(of: "--demo") else { return nil }
+        return arguments.dropFirst(flag + 1).first.flatMap(UInt64.init) ?? 7
+    }
+
+    private func startingOrigin(for size: NSSize) -> NSPoint {
+        if let saved = UserDefaults.standard.string(forKey: Self.originDefaultsKey) {
+            let origin = NSPointFromString(saved)
+            let frame = NSRect(origin: origin, size: size)
+            if NSScreen.screens.contains(where: { $0.visibleFrame.intersects(frame) }) { return origin }
+        }
+        let screen = NSScreen.main?.visibleFrame ?? .zero
+        return NSPoint(x: screen.minX + Self.screenInset, y: screen.minY + Self.screenInset)
+    }
+
     private func toggleVisibility() {
         panel.isVisible ? hide() : show()
+    }
+
+    private func summon() {
+        panel.isKeyWindow ? dismiss() : show()
     }
 
     private func show() {
@@ -95,19 +92,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if wasKey { previousApp?.activate() }
     }
 
-    private func startingOrigin(for size: NSSize) -> NSPoint {
-        if let saved = UserDefaults.standard.string(forKey: "overlayOrigin") {
-            let origin = NSPointFromString(saved)
-            let frame = NSRect(origin: origin, size: size)
-            if NSScreen.screens.contains(where: { $0.visibleFrame.intersects(frame) }) { return origin }
-        }
-        let screen = NSScreen.main?.visibleFrame ?? .zero
-        return NSPoint(x: screen.minX + 16, y: screen.minY + 16)
-    }
-
-    private func panelBecameKey() {
-        rememberFrontmostApp()
-        panel.orderFrontRegardless()
+    private func dismiss() {
+        panel.resignKey()
+        previousApp?.activate()
     }
 
     private func rememberFrontmostApp() {
@@ -116,21 +103,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func summon() {
-        panel.isKeyWindow ? dismiss() : show()
-    }
-
-    private func dismiss() {
-        panel.resignKey()
-        previousApp?.activate()
-    }
-
-    private func handle(_ event: NSEvent) -> Bool {
-        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        let key = event.charactersIgnoringModifiers?.lowercased() ?? ""
-
-        if flags.contains(.command) {
-            switch key {
+    private func handle(_ press: KeyPress) -> Bool {
+        if press.hasCommand {
+            switch press.character {
             case "n": controller.newGame()
             case "h": hide()
             case "q": NSApp.terminate(nil)
@@ -139,19 +114,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return true
         }
 
-        switch Int(event.keyCode) {
+        switch press.keyCode {
         case kVK_Return, kVK_ANSI_KeypadEnter:
             controller.pressEnter()
         case kVK_Escape:
             dismiss()
         default:
-            if key == "b" {
+            if press.character == "b" {
                 controller.toggleBoard()
                 return true
             }
-            guard let number = Int(key), (1...6).contains(number) else { return false }
+            guard let number = Int(press.character), (1...6).contains(number) else { return false }
             controller.pressNumber(number)
         }
         return true
+    }
+}
+
+private struct KeyPress: Sendable {
+    let keyCode: Int
+    let character: String
+    let hasCommand: Bool
+
+    init(_ event: NSEvent) {
+        keyCode = Int(event.keyCode)
+        character = event.charactersIgnoringModifiers?.lowercased() ?? ""
+        hasCommand = event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.command)
     }
 }

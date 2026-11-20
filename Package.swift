@@ -10,5 +10,5 @@ let package = Package(
         .executableTarget(name: "Cribbage", dependencies: ["CribbageCore", "CribbageUI"]),
         .executableTarget(name: "CribbageChecks", dependencies: ["CribbageCore"]),
     ],
-    swiftLanguageModes: [.v5]
+    swiftLanguageModes: [.v6]
 )

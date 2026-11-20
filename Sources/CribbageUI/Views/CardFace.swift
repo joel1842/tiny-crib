@@ -11,10 +11,7 @@ struct CardFace: View {
     var isDimmed = false
     var isHighlighted = false
 
-    private static let paper = Color(red: 0.98, green: 0.98, blue: 0.97)
     private static let dimmedPaper = Color(red: 0.79, green: 0.79, blue: 0.81)
-    private static let red = Color(red: 0.83, green: 0.13, blue: 0.23)
-    private static let black = Color(red: 0.11, green: 0.11, blue: 0.13)
 
     var body: some View {
         let width = size.width
@@ -31,11 +28,11 @@ struct CardFace: View {
             Image(systemName: symbol)
                 .font(.system(size: width * 0.34, weight: .bold))
         }
-        .foregroundStyle((card.suit.isRed ? Self.red : Self.black).opacity(isDimmed ? 0.7 : 1))
+        .foregroundStyle((card.suit.isRed ? Theme.suitRed : Theme.suitBlack).opacity(isDimmed ? 0.7 : 1))
         .padding(.leading, width * 0.12)
         .padding(.top, width * 0.08)
         .frame(width: width, height: size.height, alignment: .topLeading)
-        .background(shape.fill(isDimmed ? Self.dimmedPaper : Self.paper))
+        .background(shape.fill(isDimmed ? Self.dimmedPaper : Theme.paper))
         .overlay(shape.strokeBorder(.black.opacity(0.14), lineWidth: 0.5))
         .overlay {
             if let ring {
@@ -73,7 +70,7 @@ struct CardFace: View {
                 .padding(.horizontal, width * 0.08)
                 .frame(minHeight: max(11, width * 0.34))
                 .background(Capsule().fill(Theme.color(for: owner)))
-                .overlay(Capsule().strokeBorder(Self.paper, lineWidth: 1.5))
+                .overlay(Capsule().strokeBorder(Theme.paper, lineWidth: 1.5))
                 .transition(.asymmetric(insertion: .scale(scale: 0.2).animation(.spring(duration: 0.4, bounce: 0.6).delay(0.3)), removal: .identity))
         }
     }

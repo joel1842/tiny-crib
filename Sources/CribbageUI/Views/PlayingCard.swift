@@ -2,13 +2,12 @@ import CribbageCore
 import SwiftUI
 
 enum CardSize {
-    case small, medium, large
+    case small, medium
 
     var width: CGFloat {
         switch self {
         case .small: 24
         case .medium: 32
-        case .large: 40
         }
     }
 
@@ -26,7 +25,7 @@ struct PlayingCard: View, Animatable {
     var isDimmed = false
     var isHighlighted = false
 
-    var animatableData: Double {
+    nonisolated var animatableData: Double {
         get { flip }
         set { flip = newValue }
     }

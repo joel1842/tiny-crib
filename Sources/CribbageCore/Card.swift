@@ -1,4 +1,4 @@
-public enum Suit: Int, CaseIterable, Sendable {
+public enum Suit: Int, CaseIterable, Comparable, Sendable {
     case spades, hearts, diamonds, clubs
 
     public var symbol: String {
@@ -11,13 +11,20 @@ public enum Suit: Int, CaseIterable, Sendable {
     }
 
     public var isRed: Bool { self == .hearts || self == .diamonds }
+
+    public static func < (lhs: Suit, rhs: Suit) -> Bool { lhs.rawValue < rhs.rawValue }
 }
 
-public struct Card: Hashable, Sendable, CustomStringConvertible {
+public struct Card: Hashable, Comparable, Sendable, CustomStringConvertible {
+    public static let ranks = 1...13
+    public static let jack = 11
+    public static let fullDeck: [Card] = Suit.allCases.flatMap { suit in ranks.map { Card($0, suit) } }
+
     public let rank: Int
     public let suit: Suit
 
     public init(_ rank: Int, _ suit: Suit) {
+        precondition(Self.ranks.contains(rank), "Card rank must be 1...13, got \(rank)")
         self.rank = rank
         self.suit = suit
     }
@@ -36,7 +43,9 @@ public struct Card: Hashable, Sendable, CustomStringConvertible {
 
     public var description: String { label + suit.symbol }
 
-    public static let fullDeck: [Card] = Suit.allCases.flatMap { suit in (1...13).map { Card($0, suit) } }
+    public static func < (lhs: Card, rhs: Card) -> Bool {
+        (lhs.rank, lhs.suit) < (rhs.rank, rhs.suit)
+    }
 }
 
 public struct SeededGenerator: RandomNumberGenerator, Sendable {

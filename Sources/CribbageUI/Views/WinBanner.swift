@@ -12,20 +12,20 @@ struct WinBanner: View {
         HStack(spacing: 12) {
             Image(systemName: winner == .me ? "trophy.fill" : "flag.checkered")
                 .font(.system(size: 24))
-                .foregroundStyle(winner == .me ? Theme.gold : Theme.them)
+                .foregroundStyle(winner == .me ? Theme.gold : Theme.bot)
                 .symbolEffect(.bounce, options: .repeat(2), value: controller.celebrationStart)
                 .frame(width: 44, height: 44)
                 .glassEffect(.regular.tint(color.opacity(0.35)), in: .circle)
             VStack(alignment: .leading, spacing: 2) {
-                Text(winner == .me ? "You win" : "They win")
+                Text(winner == .me ? "You win" : "Bot wins")
                     .font(.system(size: 19, weight: .heavy, design: .rounded))
                     .foregroundStyle(color)
                 Text("\(game.scores[winner, default: 0]) – \(loserScore)")
                     .font(.system(size: 12, weight: .bold, design: .rounded))
                     .monospacedDigit()
                     .foregroundStyle(.white.opacity(0.85))
-                if loserScore < 91 {
-                    Text(loserScore < 61 ? "Double skunk" : "Skunk")
+                if loserScore < Game.skunkLine {
+                    Text(loserScore < Game.doubleSkunkLine ? "Double skunk" : "Skunk")
                         .font(.system(size: 8, weight: .heavy))
                         .tracking(0.6)
                         .textCase(.uppercase)

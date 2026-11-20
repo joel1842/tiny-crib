@@ -56,7 +56,7 @@ struct CountChip: View {
 
     @ViewBuilder private var status: some View {
         if let goTag {
-            Text(goTag.player == .me ? "YOU GO" : "THEM GO")
+            Text("\(goTag.player.name) GO")
                 .font(.system(size: 7, weight: .heavy))
                 .tracking(0.3)
                 .foregroundStyle(Theme.ink)

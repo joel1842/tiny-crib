@@ -1,52 +1,19 @@
 import CribbageCore
 import SwiftUI
 
-struct TableToast: Equatable {
-    let id = UUID()
-    let text: String
-    let color: Color
-}
-
-enum Pulse: Hashable {
-    case score(Player)
-    case count
-}
-
-enum CutStep {
-    case deck, split, lift, reveal, done
-
-    var showsFace: Bool { self == .reveal || self == .done }
-    var lifted: Bool { self == .lift || self == .reveal }
-    var isSplit: Bool { self == .split || self == .lift || self == .reveal }
-}
-
-enum DealCutStep {
-    case centered, split, revealed, winner, gather, done
-
-    var isOut: Bool { self == .split || self == .revealed || self == .winner }
-    var faceUp: Bool { self == .revealed || self == .winner }
-}
-
-struct CountBeat {
-    let kind: ScoreKind
-    let points: Int
-    let cards: Set<Card>
-}
-
-struct CountRow: Identifiable {
-    let kind: ScoreKind
-    let combos: [[Card]]
-    let points: Int
-    var id: ScoreKind { kind }
-}
-
-struct GoTag: Equatable {
-    let player: Player
-    let count: Int
-}
-
 @MainActor
 public final class GameController: ObservableObject {
+    private enum Job: CaseIterable {
+        case dealCut, deal, cut, opponent, hold, count, collect, toast, demo
+    }
+
+    private struct ShowingCache {
+        let stage: Stage
+        let isHoldingTable: Bool
+        let isCollecting: Bool
+        let showing: Showing?
+    }
+
     @Published public private(set) var game: Game {
         didSet { stageMayHaveChanged(from: oldValue) }
     }
@@ -71,117 +38,38 @@ public final class GameController: ObservableObject {
     @Published private(set) var showsWinner = false
 
     private var gameNumber = 0
-    private var lastStage = ""
+    private var lastStage: Stage?
     private var seenEvents = 0
-    private var opponentTask: Task<Void, Never>?
-    private var toastTask: Task<Void, Never>?
-    private var cutTask: Task<Void, Never>?
-    private var dealTask: Task<Void, Never>?
-    private var countTask: Task<Void, Never>?
-    private var demoTask: Task<Void, Never>?
-    private var dealCutTask: Task<Void, Never>?
-    private var holdTask: Task<Void, Never>?
-    private var collectTask: Task<Void, Never>?
     private var isStartingGame = false
-    private var generation = 0
-    private var showingCache: (key: String, showing: Showing?, beats: [CountBeat]) = ("", nil, [])
+    private var showingCache: ShowingCache?
+    private var jobs: [Job: Task<Void, Never>] = [:]
+    private var delayed: [Int: Task<Void, Never>] = [:]
+    private var nextDelayedID = 0
 
     public init() {
         game = Game()
     }
 
-    var myCards: [Card] {
-        game.phase == .discard ? game.hands[.me, default: []] : game.inHand[.me, default: []]
+    var stage: Stage {
+        Stage(gameNumber: gameNumber, handNumber: game.handNumber, phase: game.phase)
     }
 
     var showing: Showing? {
-        cachedShowing().showing
-    }
-
-    var countBeats: [CountBeat] {
-        cachedShowing().beats
-    }
-
-    private func cachedShowing() -> (key: String, showing: Showing?, beats: [CountBeat]) {
-        let key = "\(stage(of: game))-\(isHoldingTable)-\(isCollecting)"
-        guard showingCache.key != key else { return showingCache }
-        let showing: Showing? = if isHoldingTable || isCollecting {
-            nil
-        } else if let current = game.showing {
-            current
-        } else if game.isOver, let last = game.events.last, last.label == "hand" || last.label == "crib" {
-            game.lastShowing
-        } else {
-            nil
+        if let cache = showingCache, cache.stage == stage, cache.isHoldingTable == isHoldingTable, cache.isCollecting == isCollecting {
+            return cache.showing
         }
-        let beats = showing?.score.items.map { CountBeat(kind: $0.kind, points: $0.points, cards: Set($0.cards)) } ?? []
-        showingCache = (key, showing, beats)
-        return showingCache
-    }
-
-    var countRows: [CountRow] {
-        let revealed = countBeats.prefix(countRevealed)
-        return ScoreKind.allCases.compactMap { kind in
-            let beats = revealed.filter { $0.kind == kind }
-            guard !beats.isEmpty else { return nil }
-            let combos = beats.map { beat in
-                beat.cards.sorted { ($0.rank, $0.suit.rawValue) < ($1.rank, $1.suit.rawValue) }
-            }
-            return CountRow(kind: kind, combos: combos, points: beats.reduce(0) { $0 + $1.points })
-        }
-    }
-
-    var currentBeat: CountBeat? {
-        let beats = countBeats
-        guard countRevealed > 0, countRevealed <= beats.count, !isCountFinished else { return nil }
-        return beats[countRevealed - 1]
-    }
-
-    var highlightedCards: Set<Card> {
-        currentBeat?.cards ?? []
-    }
-
-    var revealedPoints: Int {
-        countBeats.prefix(countRevealed).reduce(0) { $0 + $1.points }
-    }
-
-    var callout: String? {
-        guard let beat = currentBeat else { return nil }
-        let name = switch beat.kind {
-        case .fifteen: "fifteen"
-        case .pair: beat.points == 2 ? "pair" : beat.points == 6 ? "pair royal" : "double royal"
-        case .run: "run"
-        case .flush: "flush"
-        case .nobs: "nobs"
-        case .thirtyOne: "thirty-one"
-        }
-        return "\(name) +\(beat.points)"
+        let showing = isHoldingTable || isCollecting ? nil : game.showing ?? game.winningShowing
+        showingCache = ShowingCache(stage: stage, isHoldingTable: isHoldingTable, isCollecting: isCollecting, showing: showing)
+        return showing
     }
 
     public func toggleBoard() {
         withAnimation(.spring(duration: 0.4, bounce: 0.25)) { isBoardShown.toggle() }
     }
 
-    private func waitForBoard() async {
-        while !Task.isCancelled && isBoardShown {
-            try? await Task.sleep(for: .milliseconds(200))
-        }
-    }
-
-    func backPeg(_ player: Player) -> Int {
-        game.backPegs[player] ?? 0
-    }
-
-    func displayedScore(_ player: Player) -> Int {
-        heldScores?[player] ?? game.scores[player, default: 0]
-    }
-
     public func newGame(seed: UInt64 = .random(in: .min ... .max)) {
-        for task in [opponentTask, countTask, dealCutTask, dealTask, cutTask, holdTask, collectTask, toastTask] {
-            task?.cancel()
-        }
+        cancelGameTasks()
         gameNumber += 1
-        generation += 1
         isStartingGame = true
         withAnimation(.spring(duration: 0.6, bounce: 0.2)) {
             dealCutStep = .centered
@@ -205,39 +93,14 @@ public final class GameController: ObservableObject {
         runDealCut()
     }
 
-    private func runDealCut() {
-        let dealer = game.dealer
-        let steps: [(DealCutStep, Int, Animation)] = [
-            (.split, 550, .spring(duration: 0.45, bounce: 0.3)),
-            (.revealed, 420, .spring(duration: 0.5, bounce: 0.25)),
-            (.winner, 450, .spring(duration: 0.35, bounce: 0.5)),
-            (.gather, 1_200, .spring(duration: 0.4, bounce: 0.2)),
-            (.done, 380, .spring(duration: 0.75, bounce: 0.28)),
-        ]
-        dealCutTask = Task { [weak self] in
-            for (step, wait, animation) in steps {
-                try? await Task.sleep(for: .milliseconds(wait))
-                await self?.waitForBoard()
-                guard !Task.isCancelled else { return }
-                withAnimation(animation) { self?.dealCutStep = step }
-                if step == .winner {
-                    self?.showToast("low card · deals", color: Theme.color(for: dealer), duration: 1.5)
-                }
-            }
-            try? await Task.sleep(for: .milliseconds(500))
-            guard !Task.isCancelled else { return }
-            self?.deal()
-        }
-    }
-
     public func runDemo(seed: UInt64) {
         newGame(seed: seed)
-        demoTask = Task { [weak self] in
+        run(.demo) { [weak self] in
             while let self, !Task.isCancelled {
                 try? await Task.sleep(for: .milliseconds(1_100))
                 switch self.game.phase {
                 case .discard:
-                    guard self.dealtCount == 12, self.myCards.count == 6 else { continue }
+                    guard self.dealtCount == 12, self.myCards.count == Game.dealtHandSize else { continue }
                     self.hover(self.myCards[1], isInside: true)
                     self.pressNumber(2)
                     try? await Task.sleep(for: .milliseconds(450))
@@ -269,7 +132,7 @@ public final class GameController: ObservableObject {
         let index = number - 1
         switch game.phase {
         case .discard:
-            guard dealtCount == 12, myCards.count == 6, myCards.indices.contains(index) else { return }
+            guard dealtCount == 12, myCards.count == Game.dealtHandSize, myCards.indices.contains(index) else { return }
             withAnimation(.spring(duration: 0.3, bounce: 0.45)) {
                 if let position = selected.firstIndex(of: index) {
                     selected.remove(at: position)
@@ -293,7 +156,7 @@ public final class GameController: ObservableObject {
             hoveredCard = nil
             landCard(scoresBefore: before, landing: landing)
             driveOpponent()
-        default:
+        case .show, .gameOver:
             break
         }
     }
@@ -306,7 +169,7 @@ public final class GameController: ObservableObject {
         guard !isHoldingTable, !isCollecting else { return }
         switch game.phase {
         case .discard:
-            guard selected.count == 2, myCards.count == 6 else { return }
+            guard selected.count == 2, myCards.count == Game.dealtHandSize else { return }
             let cards = selected.map { myCards[$0] }
             hoveredCard = nil
             withAnimation(.spring(duration: 0.55, bounce: 0.2)) {
@@ -319,7 +182,8 @@ public final class GameController: ObservableObject {
             if !isCountFinished {
                 finishCount()
             } else if step != .crib {
-                advanceToNextCount()
+                withAnimation(.spring(duration: 0.55, bounce: 0.2)) { game.advanceShow() }
+                publishEvents()
             } else {
                 collectAndDeal()
             }
@@ -334,22 +198,6 @@ public final class GameController: ObservableObject {
         }
     }
 
-    private func advanceToNextCount() {
-        withAnimation(.spring(duration: 0.55, bounce: 0.2)) { game.advanceShow() }
-        publishEvents()
-    }
-
-    private func collectAndDeal() {
-        withAnimation(.spring(duration: 0.4, bounce: 0.15)) { isCollecting = true }
-        collectTask = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(380))
-            guard let self, !Task.isCancelled else { return }
-            self.game.advanceShow()
-            self.isCollecting = false
-            self.publishEvents()
-        }
-    }
-
     func hover(_ card: Card, isInside: Bool) {
         withAnimation(.spring(duration: 0.25, bounce: 0.4)) {
             if isInside {
@@ -360,18 +208,8 @@ public final class GameController: ObservableObject {
         }
     }
 
-    private func stage(of game: Game) -> String {
-        let phase = switch game.phase {
-        case .discard: "discard"
-        case .play: "play"
-        case .show(let step): "show\(step.rawValue)"
-        case .gameOver: "over"
-        }
-        return "\(gameNumber)-\(game.handNumber)-\(phase)"
-    }
-
     private func stageMayHaveChanged(from old: Game) {
-        let current = stage(of: game)
+        let current = stage
         guard current != lastStage else { return }
         lastStage = current
         if old.phase == .play && game.phase != .play && !isStartingGame {
@@ -384,19 +222,44 @@ public final class GameController: ObservableObject {
         switch game.phase {
         case .discard:
             if dealCutStep == .done { deal() } else { dealtCount = 0 }
-        case .play: playCut()
-        default: break
+        case .play:
+            playCut()
+        case .show, .gameOver:
+            break
+        }
+    }
+
+    private func runDealCut() {
+        let dealer = game.dealer
+        let steps: [(DealCutStep, Int, Animation)] = [
+            (.split, 550, .spring(duration: 0.45, bounce: 0.3)),
+            (.revealed, 420, .spring(duration: 0.5, bounce: 0.25)),
+            (.winner, 450, .spring(duration: 0.35, bounce: 0.5)),
+            (.gather, 1_200, .spring(duration: 0.4, bounce: 0.2)),
+            (.done, 380, .spring(duration: 0.75, bounce: 0.28)),
+        ]
+        run(.dealCut) { [weak self] in
+            for (step, wait, animation) in steps {
+                try? await Task.sleep(for: .milliseconds(wait))
+                await self?.waitForBoard()
+                guard !Task.isCancelled else { return }
+                withAnimation(animation) { self?.dealCutStep = step }
+                if step == .winner {
+                    self?.showToast("low card · deals", color: Theme.color(for: dealer), duration: 1.5)
+                }
+            }
+            try? await Task.sleep(for: .milliseconds(500))
+            guard !Task.isCancelled else { return }
+            self?.deal()
         }
     }
 
     private func deal() {
-        dealTask?.cancel()
         dealtCount = 0
         shownCount = 0
         heldScores = nil
         countRevealed = 0
-
-        dealTask = Task { [weak self] in
+        run(.deal) { [weak self] in
             try? await Task.sleep(for: .milliseconds(120))
             for count in 1...12 {
                 await self?.waitForBoard()
@@ -405,92 +268,17 @@ public final class GameController: ObservableObject {
                 try? await Task.sleep(for: .milliseconds(75))
             }
             try? await Task.sleep(for: .milliseconds(900))
-            guard !Task.isCancelled, let self, self.game.phase == .discard,
-                  self.game.hands[.them, default: []].count == 6 else { return }
-            let hand = self.game.hands[.them, default: []]
-            let discard = Opponent.chooseDiscard(hand: hand, isDealer: self.game.dealer == .them)
-            withAnimation(.spring(duration: 0.55, bounce: 0.2)) { self.game.discard(discard, by: .them) }
+            guard !Task.isCancelled, let self, self.game.phase == .discard else { return }
+            let hand = self.game.hands[.bot, default: []]
+            guard hand.count == Game.dealtHandSize else { return }
+            let discard = Opponent.chooseDiscard(hand: hand, isDealer: self.game.dealer == .bot)
+            withAnimation(.spring(duration: 0.55, bounce: 0.2)) { self.game.discard(discard, by: .bot) }
             self.publishEvents()
             self.driveOpponent()
         }
     }
 
-    private func holdTable() {
-        isHoldingTable = true
-        let winningCount = game.isOver && game.events.last.map { $0.label == "hand" || $0.label == "crib" } == true
-        if let showing = game.showing ?? (winningCount ? game.lastShowing : nil) {
-            heldScores = game.scores
-            heldScores?[showing.player, default: 0] -= showing.score.total
-        }
-        holdTask = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(1_600))
-            guard let self, !Task.isCancelled else { return }
-            withAnimation(.spring(duration: 0.6, bounce: 0.2)) {
-                self.isHoldingTable = false
-                self.toast = nil
-            }
-            if self.showing != nil {
-                self.beginCount()
-            } else {
-                self.heldScores = nil
-                self.celebrate()
-            }
-        }
-    }
-
-    private func celebrate() {
-        withAnimation(.spring(duration: 0.5, bounce: 0.3)) { showsWinner = true }
-        celebrationStart = Date()
-    }
-
-    private func beginCount() {
-        countTask?.cancel()
-        guard let showing else { return }
-        let beats = showing.score.items
-        let player = showing.player
-        heldScores = game.scores
-        heldScores?[player, default: 0] -= showing.score.total
-        countRevealed = 0
-        isCountFinished = false
-        countTask = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(500))
-            for (index, beat) in beats.enumerated() {
-                await self?.waitForBoard()
-                guard !Task.isCancelled, let self else { return }
-                withAnimation(.spring(duration: 0.35, bounce: 0.35)) {
-                    self.countRevealed = index + 1
-                    self.heldScores?[player, default: 0] += beat.points
-                }
-                self.pulse(.score(player))
-                try? await Task.sleep(for: .milliseconds(720))
-            }
-            try? await Task.sleep(for: .milliseconds(beats.isEmpty ? 700 : 250))
-            guard !Task.isCancelled else { return }
-            self?.finishCount()
-        }
-    }
-
-    private func finishCount() {
-        countTask?.cancel()
-        guard let showing else { return }
-        let skipped = countRevealed < showing.score.items.count
-        withAnimation(.spring(duration: 0.35, bounce: 0.3)) {
-            countRevealed = showing.score.items.count
-            isCountFinished = true
-            heldScores = nil
-        }
-        if skipped && showing.score.total > 0 { pulse(.score(showing.player)) }
-        if game.isOver {
-            countTask = Task { [weak self] in
-                try? await Task.sleep(for: .milliseconds(900))
-                guard !Task.isCancelled else { return }
-                self?.celebrate()
-            }
-        }
-    }
-
     private func playCut() {
-        cutTask?.cancel()
         cutStep = .deck
         displayRound = 0
         goTag = nil
@@ -500,7 +288,7 @@ public final class GameController: ObservableObject {
             (.reveal, 200, .spring(duration: 0.5, bounce: 0.25)),
             (.done, 650, .spring(duration: 0.4, bounce: 0.2)),
         ]
-        cutTask = Task { [weak self] in
+        run(.cut) { [weak self] in
             for (step, wait, animation) in steps {
                 try? await Task.sleep(for: .milliseconds(wait))
                 await self?.waitForBoard()
@@ -511,25 +299,24 @@ public final class GameController: ObservableObject {
     }
 
     private func driveOpponent() {
-        opponentTask?.cancel()
-        guard game.phase == .play, game.turn == .them else { return }
+        jobs[.opponent]?.cancel()
+        guard game.phase == .play, game.turn == .bot else { return }
         let delay = game.played.isEmpty ? 2_300 : 1_000
-        opponentTask = Task { [weak self] in
+        run(.opponent) { [weak self] in
             try? await Task.sleep(for: .milliseconds(delay))
             await self?.waitForBoard()
-            guard !Task.isCancelled, let self else { return }
-            self.playOpponentCard()
+            guard !Task.isCancelled else { return }
+            self?.playOpponentCard()
         }
     }
 
     private func playOpponentCard() {
-        guard game.phase == .play, game.turn == .them else { return }
-        let hand = game.inHand[.them, default: []]
-        guard let card = Opponent.choosePlay(hand: hand, sequence: game.sequence, count: game.count) else { return }
+        guard game.phase == .play, game.turn == .bot,
+              let card = Opponent.choosePlay(hand: game.inHand[.bot, default: []], sequence: game.sequence, count: game.count) else { return }
         finishPendingReset()
         let before = game.scores
         let landing = game.count + card.value
-        withAnimation(.spring(duration: 0.6, bounce: 0.22)) { _ = game.play(card, by: .them) }
+        withAnimation(.spring(duration: 0.6, bounce: 0.22)) { _ = game.play(card, by: .bot) }
         landCard(scoresBefore: before, landing: landing)
         driveOpponent()
     }
@@ -550,84 +337,193 @@ public final class GameController: ObservableObject {
         let didReset = game.phase == .play && game.count != landing
         let round = game.round
         let count = game.count
-        let generation = generation
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
-            guard let self, self.generation == generation else { return }
+        after(.milliseconds(200)) { [weak self] in
+            guard let self else { return }
             withAnimation(.spring(duration: 0.2, bounce: 0.3)) { self.shownCount = landing }
             if !self.isHoldingTable && self.game.phase == .play {
                 withAnimation(.smooth(duration: 0.3)) { self.heldScores = nil }
             }
             self.publishEvents()
-            guard didReset else { return }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.95) {
-                guard self.generation == generation, self.displayRound < round,
-                      self.game.phase == .play || self.isHoldingTable else { return }
-                withAnimation(.spring(duration: 0.45, bounce: 0.2)) {
-                    self.displayRound = round
-                    self.goTag = nil
-                }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                    guard self.generation == generation, !self.game.played.contains(where: { $0.round >= round }) else { return }
-                    withAnimation(.spring(duration: 0.2, bounce: 0.3)) { self.shownCount = count }
-                }
+            if didReset { self.sweepPile(round: round, count: count) }
+        }
+    }
+
+    private func sweepPile(round: Int, count: Int) {
+        after(.milliseconds(950)) { [weak self] in
+            guard let self, self.displayRound < round, self.game.phase == .play || self.isHoldingTable else { return }
+            withAnimation(.spring(duration: 0.45, bounce: 0.2)) {
+                self.displayRound = round
+                self.goTag = nil
+            }
+            self.after(.milliseconds(500)) { [weak self] in
+                guard let self, !self.game.played.contains(where: { $0.round >= round }) else { return }
+                withAnimation(.spring(duration: 0.2, bounce: 0.3)) { self.shownCount = count }
             }
         }
     }
 
-    private func publishEvents() {
-        let fresh = Array(game.events.dropFirst(seenEvents))
-        seenEvents = game.events.count
-        let tableEvents = fresh.filter { $0.label != "hand" && $0.label != "crib" }
-        guard !tableEvents.isEmpty else { return }
+    private func holdTable() {
+        isHoldingTable = true
+        if let showing = game.showing ?? game.winningShowing {
+            heldScores = game.scores
+            heldScores?[showing.player, default: 0] -= showing.score.total
+        }
+        run(.hold) { [weak self] in
+            try? await Task.sleep(for: .milliseconds(1_600))
+            guard let self, !Task.isCancelled else { return }
+            withAnimation(.spring(duration: 0.6, bounce: 0.2)) {
+                self.isHoldingTable = false
+                self.toast = nil
+            }
+            if self.showing != nil {
+                self.beginCount()
+            } else {
+                self.heldScores = nil
+                self.celebrate()
+            }
+        }
+    }
 
-        let heels = tableEvents.contains { $0.label == "his heels" }
-        let delay = heels ? 1.5 : 0
+    private func beginCount() {
+        guard let showing else {
+            jobs[.count]?.cancel()
+            return
+        }
+        let items = showing.score.items
+        let player = showing.player
+        heldScores = game.scores
+        heldScores?[player, default: 0] -= showing.score.total
+        countRevealed = 0
+        isCountFinished = false
+        run(.count) { [weak self] in
+            try? await Task.sleep(for: .milliseconds(500))
+            for (index, item) in items.enumerated() {
+                await self?.waitForBoard()
+                guard !Task.isCancelled, let self else { return }
+                withAnimation(.spring(duration: 0.35, bounce: 0.35)) {
+                    self.countRevealed = index + 1
+                    self.heldScores?[player, default: 0] += item.points
+                }
+                self.pulse(.score(player))
+                try? await Task.sleep(for: .milliseconds(720))
+            }
+            try? await Task.sleep(for: .milliseconds(items.isEmpty ? 700 : 250))
+            guard !Task.isCancelled else { return }
+            self?.finishCount()
+        }
+    }
+
+    private func finishCount() {
+        jobs[.count]?.cancel()
+        guard let showing else { return }
+        let skipped = countRevealed < showing.score.items.count
+        withAnimation(.spring(duration: 0.35, bounce: 0.3)) {
+            countRevealed = showing.score.items.count
+            isCountFinished = true
+            heldScores = nil
+        }
+        if skipped && showing.score.total > 0 { pulse(.score(showing.player)) }
+        guard game.isOver else { return }
+        run(.count) { [weak self] in
+            try? await Task.sleep(for: .milliseconds(900))
+            guard !Task.isCancelled else { return }
+            self?.celebrate()
+        }
+    }
+
+    private func collectAndDeal() {
+        withAnimation(.spring(duration: 0.4, bounce: 0.15)) { isCollecting = true }
+        run(.collect) { [weak self] in
+            try? await Task.sleep(for: .milliseconds(380))
+            guard let self, !Task.isCancelled else { return }
+            self.game.advanceShow()
+            self.isCollecting = false
+            self.publishEvents()
+        }
+    }
+
+    private func celebrate() {
+        withAnimation(.spring(duration: 0.5, bounce: 0.3)) { showsWinner = true }
+        celebrationStart = Date()
+    }
+
+    private func publishEvents() {
+        let fresh = game.events.dropFirst(seenEvents)
+        seenEvents = game.events.count
+        let tableEvents = fresh.filter { !$0.reason.isShow }
+        guard let colorEvent = tableEvents.last(where: { $0.points > 0 }) ?? tableEvents.last else { return }
+
+        let heels = tableEvents.contains { $0.reason == .heels }
         if heels, heldScores == nil {
             heldScores = game.scores
             for event in tableEvents { heldScores?[event.player, default: 0] -= event.points }
         }
 
-        if let go = tableEvents.last(where: { $0.points == 0 }) {
+        if let go = tableEvents.last(where: { $0.reason == .saidGo }) {
             withAnimation(.spring(duration: 0.3, bounce: 0.4)) { goTag = GoTag(player: go.player, count: shownCount) }
         }
 
-        let text = tableEvents.map { event in
-            event.points > 0 ? "+\(event.points) \(event.label)" : "go"
-        }.joined(separator: " · ")
-        let color = Theme.color(for: (tableEvents.last(where: { $0.points > 0 }) ?? tableEvents.last!).player)
-        let generation = generation
+        let text = tableEvents
+            .map { $0.reason == .saidGo ? "go" : "+\($0.points) \($0.reason.label)" }
+            .joined(separator: " · ")
+        let scorers = Set(tableEvents.filter { $0.points > 0 }.map(\.player))
+        let hitsCount = tableEvents.contains { event in
+            guard case .pegging(let kind, _) = event.reason else { return false }
+            return kind == .fifteen || kind == .thirtyOne
+        }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-            guard let self, self.generation == generation else { return }
+        after(.seconds(heels ? 1.5 : 0)) { [weak self] in
+            guard let self else { return }
             if heels { withAnimation(.smooth(duration: 0.3)) { self.heldScores = nil } }
-            for player in [Player.me, .them] where tableEvents.contains(where: { $0.player == player && $0.points > 0 }) {
+            for player in [Player.me, .bot] where scorers.contains(player) {
                 self.pulse(.score(player))
             }
-            if tableEvents.contains(where: { $0.label == "fifteen" || $0.label == "thirty-one" }) {
-                self.pulse(.count)
-            }
-            self.showToast(text, color: color)
+            if hitsCount { self.pulse(.count) }
+            self.showToast(text, color: Theme.color(for: colorEvent.player))
         }
     }
 
     private func pulse(_ target: Pulse) {
         withAnimation(.spring(duration: 0.2, bounce: 0.6)) { _ = pulses.insert(target) }
-        let generation = generation
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
-            guard self?.generation == generation else { return }
+        after(.milliseconds(250)) { [weak self] in
             withAnimation(.spring(duration: 0.4, bounce: 0.3)) { _ = self?.pulses.remove(target) }
         }
     }
 
-    private func showToast(_ text: String, color: Color, delay: Double = 0, duration: Double = 1.6) {
-        toastTask?.cancel()
-        toastTask = Task { [weak self] in
-            if delay > 0 { try? await Task.sleep(for: .seconds(delay)) }
-            guard !Task.isCancelled else { return }
+    private func showToast(_ text: String, color: Color, duration: Double = 1.6) {
+        run(.toast) { [weak self] in
             withAnimation(.spring(duration: 0.35, bounce: 0.45)) { self?.toast = TableToast(text: text, color: color) }
             try? await Task.sleep(for: .seconds(duration))
             guard !Task.isCancelled else { return }
             withAnimation(.easeOut(duration: 0.25)) { self?.toast = nil }
         }
+    }
+
+    private func waitForBoard() async {
+        while !Task.isCancelled && isBoardShown {
+            try? await Task.sleep(for: .milliseconds(200))
+        }
+    }
+
+    private func run(_ job: Job, _ body: @escaping @MainActor () async -> Void) {
+        jobs[job]?.cancel()
+        jobs[job] = Task { await body() }
+    }
+
+    private func after(_ delay: Duration, _ action: @escaping @MainActor () -> Void) {
+        nextDelayedID += 1
+        let id = nextDelayedID
+        delayed[id] = Task { [weak self] in
+            try? await Task.sleep(for: delay)
+            guard !Task.isCancelled else { return }
+            self?.delayed[id] = nil
+            action()
+        }
+    }
+
+    private func cancelGameTasks() {
+        for (job, task) in jobs where job != .demo { task.cancel() }
+        delayed.values.forEach { $0.cancel() }
+        delayed = [:]
     }
 }
