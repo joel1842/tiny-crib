@@ -4,7 +4,7 @@ A tiny cribbage game that runs in a tiny window in the bottom left corner of you
 
 [![Download for macOS](assets/download-button.svg)](https://github.com/joel1842/tiny-crib/releases/latest/download/tiny-crib.dmg)
 
-## Keys
+## Controls
 
 | Key | Does |
 | --- | --- |
