@@ -7,7 +7,7 @@ VERSION="$version" scripts/bundle.sh
 
 staging="$(mktemp -d)"
 trap 'rm -rf "$staging"' EXIT
-cp -R dist/Cribbage.app "$staging/"
+cp -R "dist/Tiny Crib.app" "$staging/"
 ln -s /Applications "$staging/Applications"
 
 dmg="dist/tiny-crib.dmg"
